@@ -1,0 +1,18 @@
+[package]
+name = "codex-crypto"
+description = "Codex cryptographic primitives: PeerId, domain-separation tags, and re-exports of ed25519 and blake3"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ed25519-dalek = { workspace = true }
+blake3 = { workspace = true }
+hex = { workspace = true }
+rand_core = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+postcard = { workspace = true }

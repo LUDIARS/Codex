@@ -1,0 +1,19 @@
+[package]
+name = "codex-core"
+description = "Codex core types: Event, Block, BlockHeader, Namespace, state hashes, canonical serialization"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+codex-crypto = { path = "../codex-crypto" }
+hex = { workspace = true }
+serde = { workspace = true }
+serde_bytes = { workspace = true }
+postcard = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+rand_core = { workspace = true }
