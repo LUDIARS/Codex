@@ -1,8 +1,12 @@
 # Codex 設計書
 
-> 版: 0.1 (初稿) — 2026-04-23
+> 版: 0.2 — 2026-04-23
 > 著者: kazmit299
 > ステータス: 設計ドラフト (実装未着手)
+>
+> **変更履歴**
+> - 0.2 (2026-04-23) — A1 確定: Event から `parent` フィールドを削除。DAG 依存は namespace body に委譲
+> - 0.1 (2026-04-23) — 初稿
 
 ---
 
@@ -135,7 +139,6 @@ struct Event {
     namespace:   Namespace,          // "tessera.game", "curare.asset", ...
     claimant:    PeerId,
     nonce:       u64,                // per-(claimant, namespace) 単調増加
-    parent:      Option<EventHash>,  // (optional) 依存先イベントの hash
     body:        EventBody,          // namespace 別のペイロード (bytes)
     timestamp:   u64,                // claimant 側の unix ms (参考値)
     sig:         Ed25519Signature,   // 上記全てへの署名
@@ -145,9 +148,30 @@ struct Namespace(String);  // "<owner>.<topic>" ドット区切り、ASCII
 struct EventHash(Blake3Hash);  // event canonical serialization の blake3
 ```
 
-- **nonce**: replay protection。peer が namespace 別に単調増加させる。
-- **parent**: DAG 的依存 (ex: "この pickup は前の trigger を前提とする")。通常は `None`。
+- **nonce**: replay protection。peer が namespace 別に単調増加させる (詳細 §5.2.1)。
 - **body**: namespace で schema が決まる。Codex core は不透明バイト列として扱う。
+
+#### 5.2.1 因果依存の表現 — `body` に埋め込む
+
+core Event に `parent` フィールドは **持たない**。DAG 的因果依存が必要な namespace は、自 schema の `body` 内に依存 hash を埋め込む:
+
+```
+# 例: tessera.game の "pickup requires trigger" を表す body
+{
+  "kind": "pickup",
+  "item_id": "...",
+  "requires": [ <EventHash of prior trigger> ],
+  ...
+}
+```
+
+namespace handler の `validate()` が state 参照で依存成立を確認する。core はこの依存を関知しない。
+
+**この分離の利得**:
+- light client SPV が **線形 merkle walk** (O(log N)) で完結 — DAG walk 不要
+- block ordering が canonical total order に閉じ、STF 決定性が単純化
+- 大半の namespace は依存を使わない — core schema から排除するのが妥当
+- Ethereum も tx 自体に parent は持たず、block 内順序で依存を表現している — 参照モデルと整合
 
 ### 5.3 Block
 
@@ -483,7 +507,7 @@ codex/
 - [ ] Checkpoint 署名者の bootstrap trust — bundled public key vs PKI vs transparency log
 - [ ] Session → domain chain の checkpoint 形式 — 1 event として埋込か、header extension か
 - [ ] `codex-crypto` は独立 crate 化か `synergos-crypto` 再エクスポートか
-- [ ] Event の `parent` フィールド必要性 — DAG 化はコスト増、M3 実装時に要否を再判断
+- [x] ~~Event の `parent` フィールド必要性~~ — **v0.2 で削除確定**。DAG 依存は namespace body に埋込 (§5.2.1)
 - [ ] `nonce` の spacing — gap 許容か厳密連番か (モバイル offline 耐性に関係)
 - [ ] Ethereum RLP 互換は追求するか — 第三者 verifier の言語多様性に効く反面、実装コスト増
 
