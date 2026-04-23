@@ -2,6 +2,7 @@
 members = [
     "codex-crypto",
     "codex-core",
+    "codex-state",
 ]
 resolver = "2"
 

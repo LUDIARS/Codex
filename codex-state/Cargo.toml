@@ -1,0 +1,20 @@
+[package]
+name = "codex-state"
+description = "Codex state layer: sorted-key binary merkle, existence/non-existence proofs, state transition function, namespace handler registry"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+codex-core = { path = "../codex-core" }
+codex-crypto = { path = "../codex-crypto" }
+hex = { workspace = true }
+serde = { workspace = true }
+serde_bytes = { workspace = true }
+postcard = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+rand_core = { workspace = true }

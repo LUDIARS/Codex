@@ -109,6 +109,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-state"
+version = "0.1.0"
+dependencies = [
+ "codex-core",
+ "codex-crypto",
+ "hex",
+ "postcard",
+ "rand_core",
+ "serde",
+ "serde_bytes",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
