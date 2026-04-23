@@ -45,3 +45,25 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  bench-compile:
+    name: Benchmarks (compile-check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # --no-run ensures benches compile on every CI run without
+      # spending minutes running them. Regression-tracking harness
+      # lands separately (criterion-compare action).
+      - run: cargo bench --no-run -p codex-bench
+
+  demo:
+    name: Demo (run)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo run -p codex-demo --release
+        timeout-minutes: 3

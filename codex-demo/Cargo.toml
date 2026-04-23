@@ -1,0 +1,25 @@
+[package]
+name = "codex-demo"
+description = "End-to-end demo: world-first achievement flow across producer, follower, light client"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+codex-core = { path = "../codex-core" }
+codex-crypto = { path = "../codex-crypto" }
+codex-state = { path = "../codex-state" }
+codex-consensus = { path = "../codex-consensus" }
+codex-domain-examples = { path = "../codex-domain-examples" }
+codex-node = { path = "../codex-node" }
+codex-sync = { path = "../codex-sync" }
+codex-light = { path = "../codex-light" }
+hex = { workspace = true }
+rand_core = { workspace = true }
+postcard = { workspace = true }
+
+[[bin]]
+name = "codex-demo"
+path = "src/main.rs"

@@ -114,6 +114,13 @@ impl SessionNode {
         self.store.as_ref()
     }
 
+    /// Mutable access to the state replica. Primarily used by tooling
+    /// (snapshots, fast sync, debug) that needs to read or rebuild
+    /// the tree outside of the STF path.
+    pub fn state_mut(&mut self) -> &mut codex_state::StateTree {
+        &mut self.state
+    }
+
     pub fn state_get(&self, namespace: &Namespace, key_hash: &[u8; 32]) -> Option<&[u8]> {
         self.state.get(namespace, key_hash)
     }

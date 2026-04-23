@@ -1,0 +1,20 @@
+[package]
+name = "codex-net"
+description = "Codex network wire protocol + QUIC transport skeleton for real-network sync"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+codex-core = { path = "../codex-core" }
+codex-crypto = { path = "../codex-crypto" }
+codex-state = { path = "../codex-state" }
+codex-consensus = { path = "../codex-consensus" }
+codex-sync = { path = "../codex-sync" }
+serde = { workspace = true }
+postcard = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]

@@ -10,6 +10,8 @@ members = [
     "codex-light",
     "codex-bench",
     "codex-ffi",
+    "codex-net",
+    "codex-demo",
 ]
 resolver = "2"
 

@@ -2,12 +2,13 @@
 //! producer and verifier paths.
 
 use codex_core::hashes::{BlockHash, ChainId};
+use serde::{Deserialize, Serialize};
 
 /// Current head of a chain.
 ///
 /// At genesis (`height == 0`), `tip_hash` is the all-zero `BlockHash`;
 /// height-1 blocks reference that value as `prev_hash`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChainTip {
     pub chain_id: ChainId,
     pub height: u64,
