@@ -1,0 +1,20 @@
+[package]
+name = "codex-domain-examples"
+description = "Reference NamespaceHandler implementations for Tessera (game-rights) and Curare (asset-ledger), showing the expected patterns for LUDIARS domains"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+codex-core = { path = "../codex-core" }
+codex-crypto = { path = "../codex-crypto" }
+codex-state = { path = "../codex-state" }
+serde = { workspace = true }
+serde_bytes = { workspace = true }
+postcard = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+rand_core = { workspace = true }

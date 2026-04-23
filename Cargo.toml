@@ -4,6 +4,8 @@ members = [
     "codex-core",
     "codex-state",
     "codex-consensus",
+    "codex-domain-examples",
+    "codex-node",
 ]
 resolver = "2"
 

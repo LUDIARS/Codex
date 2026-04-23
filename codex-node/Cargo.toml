@@ -1,0 +1,21 @@
+[package]
+name = "codex-node"
+description = "Single-process Codex node: mempool + producer + verifier + in-memory block store + state replica"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+codex-core = { path = "../codex-core" }
+codex-crypto = { path = "../codex-crypto" }
+codex-state = { path = "../codex-state" }
+codex-consensus = { path = "../codex-consensus" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+codex-domain-examples = { path = "../codex-domain-examples" }
+rand_core = { workspace = true }
+postcard = { workspace = true }

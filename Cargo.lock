@@ -122,6 +122,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-domain-examples"
+version = "0.1.0"
+dependencies = [
+ "codex-core",
+ "codex-crypto",
+ "codex-state",
+ "postcard",
+ "rand_core",
+ "serde",
+ "serde_bytes",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "codex-node"
+version = "0.1.0"
+dependencies = [
+ "codex-consensus",
+ "codex-core",
+ "codex-crypto",
+ "codex-domain-examples",
+ "codex-state",
+ "postcard",
+ "rand_core",
+ "serde",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "codex-state"
 version = "0.1.0"
 dependencies = [

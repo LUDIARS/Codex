@@ -46,6 +46,13 @@ impl SessionProducer {
         &self.tip
     }
 
+    /// Allows a higher layer (e.g. `SessionNode`) to reset the tip
+    /// when it has independently advanced via `ingest_block`. Use
+    /// only in that controlled context.
+    pub fn tip_mut(&mut self) -> &mut ChainTip {
+        &mut self.tip
+    }
+
     pub fn producer_id(&self) -> PeerId {
         self.producer
     }

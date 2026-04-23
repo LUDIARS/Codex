@@ -67,6 +67,14 @@ impl BlockVerifier {
         &self.tip
     }
 
+    /// Controlled tip override: used by `SessionNode` when it has
+    /// also advanced its producer via `produce`. The tip invariants
+    /// (`height` == tip.height + 1, `prev_hash` match) are still
+    /// enforced on every subsequent `verify_and_apply`.
+    pub fn tip_mut(&mut self) -> &mut ChainTip {
+        &mut self.tip
+    }
+
     pub fn verify_and_apply<F>(
         &mut self,
         block: &Block,
