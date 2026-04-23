@@ -1,10 +1,11 @@
 # Codex 設計書
 
-> 版: 0.3 — 2026-04-23
+> 版: 0.4 — 2026-04-23
 > 著者: kazmit299
 > ステータス: 設計ドラフト (実装未着手)
 >
 > **変更履歴**
+> - 0.4 (2026-04-23) — A3 確定: `codex-crypto` は `synergos-crypto` のファサード crate として存在、domain separation 定数のみ独自定義
 > - 0.3 (2026-04-23) — A2 確定: nonce は (claimant, namespace) で一意のみ要求、厳密連番 enforce せず gap 許容
 > - 0.2 (2026-04-23) — A1 確定: Event から `parent` フィールドを削除。DAG 依存は namespace body に委譲
 > - 0.1 (2026-04-23) — 初稿
@@ -481,7 +482,7 @@ pub fn verify_state_proof(
 ```
 codex/
 ├── codex-core          # Event, Block, Header, Namespace, EventHash (no_std ok)
-├── codex-crypto        # ed25519, blake3, merkle (no_std ok, synergos-crypto 再エクスポート想定)
+├── codex-crypto        # synergos-crypto のファサード + domain-separation 定数 (no_std ok、§11.1)
 ├── codex-state         # State tree (sorted-key binary merkle)、STF loop
 ├── codex-consensus     # session (single signer) + committee (PoA)
 ├── codex-net           # QUIC + gossip + RPC (synergos-net 利用)
@@ -496,10 +497,43 @@ codex/
     └── asset-ledger    # Curare が使う namespace (reference)
 ```
 
+### 11.1 `codex-crypto` — Synergos 基盤への薄いファサード
+
+**方針**: 暗号実装は持たず、`synergos-crypto` を再エクスポート。Codex 側の domain-separation tag のみ独自定義。
+
+```rust
+// codex-crypto/src/lib.rs
+#![no_std]
+
+// Synergos 暗号基盤をそのまま再エクスポート
+pub use synergos_crypto::{
+    Ed25519PrivateKey, Ed25519PublicKey, Ed25519Signature,
+    PeerId, Blake3Hash, Blake3Hasher,
+};
+
+/// Codex 固有の domain-separation 定数
+/// merkle leaf / internal / header 署名ごとに別プレフィクスで second-preimage 耐性を確保
+pub mod dom {
+    pub const LEAF:     &[u8; 16] = b"LUDIARS-CDX-L001";
+    pub const INTERNAL: &[u8; 16] = b"LUDIARS-CDX-N001";
+    pub const BLOCK_SIG:&[u8; 16] = b"LUDIARS-CDX-B001";
+    pub const EVENT_SIG:&[u8; 16] = b"LUDIARS-CDX-E001";
+}
+```
+
+**この境界の利点**:
+
+- Codex 内の全 crate は `codex-crypto` を import、`synergos-crypto` を直接触らない
+- Synergos 側で API 変更があっても、facade 層で吸収できる (差替えポイント明確)
+- 将来 `ludiars-crypto` 共有 crate へ昇格させる場合、facade の依存先を変えるだけで全体が追随
+- domain-separation tag が Codex 固有の場所に集約 — Synergos と混ざらない
+
+**前提**: `synergos-crypto` crate が Synergos workspace 内で独立していること。未分離なら Synergos 側で crate 分離 PR を先行させる (Synergos workspace issue 起票予定)。
+
 ## 12. 依存関係
 
 再利用:
-- `synergos-crypto` (想定): ed25519 / blake3
+- `synergos-crypto`: ed25519 / blake3 / PeerId。**`codex-crypto` 経由で間接参照** (§11.1)
 - `synergos-net`: QUIC / gossipsub / connection migration
 - `quinn`: QUIC
 - `postcard` + `serde`: Event / Block シリアライズ
@@ -542,7 +576,7 @@ codex/
 - [ ] Committee mode の validator 変更プロトコル詳細 — 2/3 合意で即変更か、epoch 境界でのみか
 - [ ] Checkpoint 署名者の bootstrap trust — bundled public key vs PKI vs transparency log
 - [ ] Session → domain chain の checkpoint 形式 — 1 event として埋込か、header extension か
-- [ ] `codex-crypto` は独立 crate 化か `synergos-crypto` 再エクスポートか
+- [x] ~~`codex-crypto` は独立 crate 化か `synergos-crypto` 再エクスポートか~~ — **v0.4 で確定**: ファサード crate として独立、中身は `synergos-crypto` 再エクスポート + domain-separation 定数のみ (§11.1)。前提として Synergos workspace で `synergos-crypto` crate 分離が必要 (先行タスク)
 - [x] ~~Event の `parent` フィールド必要性~~ — **v0.2 で削除確定**。DAG 依存は namespace body に埋込 (§5.2.1)
 - [x] ~~`nonce` の spacing~~ — **v0.3 で確定**: ユニーク性のみ必須、単調増加は推奨、gap 許容 (§5.2.2)
 - [ ] Ethereum RLP 互換は追求するか — 第三者 verifier の言語多様性に効く反面、実装コスト増
