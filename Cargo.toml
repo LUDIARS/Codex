@@ -6,6 +6,8 @@ members = [
     "codex-consensus",
     "codex-domain-examples",
     "codex-node",
+    "codex-sync",
+    "codex-light",
 ]
 resolver = "2"
 

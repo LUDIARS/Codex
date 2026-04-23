@@ -136,6 +136,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-light"
+version = "0.1.0"
+dependencies = [
+ "codex-consensus",
+ "codex-core",
+ "codex-crypto",
+ "codex-domain-examples",
+ "codex-node",
+ "codex-state",
+ "codex-sync",
+ "postcard",
+ "rand_core",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "codex-node"
 version = "0.1.0"
 dependencies = [
@@ -161,6 +177,21 @@ dependencies = [
  "rand_core",
  "serde",
  "serde_bytes",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "codex-sync"
+version = "0.1.0"
+dependencies = [
+ "codex-consensus",
+ "codex-core",
+ "codex-crypto",
+ "codex-domain-examples",
+ "codex-node",
+ "codex-state",
+ "postcard",
+ "rand_core",
  "thiserror 1.0.69",
 ]
 

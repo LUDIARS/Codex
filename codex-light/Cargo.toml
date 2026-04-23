@@ -1,0 +1,22 @@
+[package]
+name = "codex-light"
+description = "Codex light client: header chain following + SPV verification helpers for mobile"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+codex-core = { path = "../codex-core" }
+codex-crypto = { path = "../codex-crypto" }
+codex-state = { path = "../codex-state" }
+codex-consensus = { path = "../codex-consensus" }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+codex-domain-examples = { path = "../codex-domain-examples" }
+codex-node = { path = "../codex-node" }
+codex-sync = { path = "../codex-sync" }
+rand_core = { workspace = true }
+postcard = { workspace = true }
