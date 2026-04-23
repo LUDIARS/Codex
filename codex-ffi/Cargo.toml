@@ -1,0 +1,21 @@
+[package]
+name = "codex-ffi"
+description = "C ABI for Codex: PeerId derivation, event signature verification, SPV proof verification for Unity / Godot / iOS / Android bindings"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+codex-core = { path = "../codex-core" }
+codex-crypto = { path = "../codex-crypto" }
+codex-state = { path = "../codex-state" }
+codex-light = { path = "../codex-light" }
+postcard = { workspace = true }
+
+[dev-dependencies]
+rand_core = { workspace = true }

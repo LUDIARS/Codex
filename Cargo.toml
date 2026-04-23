@@ -8,6 +8,8 @@ members = [
     "codex-node",
     "codex-sync",
     "codex-light",
+    "codex-bench",
+    "codex-ffi",
 ]
 resolver = "2"
 

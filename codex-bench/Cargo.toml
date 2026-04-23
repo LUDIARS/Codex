@@ -1,0 +1,30 @@
+[package]
+name = "codex-bench"
+description = "Criterion benchmarks for Codex: event signing, merkle computation, STF throughput, proof verification"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+codex-core = { path = "../codex-core" }
+codex-crypto = { path = "../codex-crypto" }
+codex-state = { path = "../codex-state" }
+rand_core = { workspace = true }
+postcard = { workspace = true }
+
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "signing"
+harness = false
+
+[[bench]]
+name = "merkle"
+harness = false
+
+[[bench]]
+name = "state_tree"
+harness = false
