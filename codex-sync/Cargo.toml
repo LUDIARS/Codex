@@ -13,6 +13,9 @@ codex-crypto = { path = "../codex-crypto" }
 codex-state = { path = "../codex-state" }
 codex-consensus = { path = "../codex-consensus" }
 codex-node = { path = "../codex-node" }
+hex = { workspace = true }
+serde = { workspace = true }
+postcard = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]

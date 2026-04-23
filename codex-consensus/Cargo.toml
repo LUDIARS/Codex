@@ -12,6 +12,7 @@ codex-core = { path = "../codex-core" }
 codex-crypto = { path = "../codex-crypto" }
 codex-state = { path = "../codex-state" }
 serde = { workspace = true }
+serde_bytes = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]

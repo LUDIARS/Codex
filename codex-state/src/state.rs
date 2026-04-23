@@ -14,7 +14,7 @@
 use codex_core::namespace::Namespace;
 use serde::{Deserialize, Serialize};
 
-use crate::merkle::{compute_root, compute_siblings, leaf_hash, HASH_LEN};
+use crate::merkle::{compute_root, compute_siblings, leaf_hash, state_root_commit, HASH_LEN};
 use crate::proof::{tuple_lt, ExistenceProof, NonExistenceProof};
 
 /// A single state-tree entry. Kept public so that namespace handlers
@@ -97,19 +97,36 @@ impl StateTree {
         }
     }
 
-    /// Merkle root of the current tree. Cached between mutations.
+    /// State root of the current tree. Cached between mutations.
+    /// `state_root = blake3(dom::STATE_ROOT ‖ u64_le(leaf_count) ‖ merkle_root)`
+    /// per §5.4.3 — commits to leaf count so proof indices are verifiable.
     pub fn root(&mut self) -> [u8; HASH_LEN] {
         if let Some(r) = self.root_cache {
             return r;
         }
+        let r = state_root_commit(self.leaves.len() as u64, &self.raw_merkle_root());
+        self.root_cache = Some(r);
+        r
+    }
+
+    fn raw_merkle_root(&self) -> [u8; HASH_LEN] {
         let hashes: Vec<[u8; HASH_LEN]> = self
             .leaves
             .iter()
             .map(|e| leaf_hash(e.namespace.as_str(), &e.key_hash, &e.value))
             .collect();
-        let r = compute_root(&hashes);
-        self.root_cache = Some(r);
-        r
+        compute_root(&hashes)
+    }
+
+    /// Number of leaves in the tree (public for serializing snapshots).
+    pub fn leaf_count(&self) -> u64 {
+        self.leaves.len() as u64
+    }
+
+    /// Iterate over the sorted leaves. Used by [`crate::snapshot`] and
+    /// tooling that needs to serialize state.
+    pub fn iter(&self) -> impl Iterator<Item = &StateEntry> {
+        self.leaves.iter()
     }
 
     /// Produce an `ExistenceProof` for a key that is present.
@@ -120,11 +137,7 @@ impl StateTree {
         key_hash: &[u8; HASH_LEN],
     ) -> Option<ExistenceProof> {
         let idx = self.find(namespace, key_hash).ok()?;
-        let hashes: Vec<[u8; HASH_LEN]> = self
-            .leaves
-            .iter()
-            .map(|e| leaf_hash(e.namespace.as_str(), &e.key_hash, &e.value))
-            .collect();
+        let hashes = self.leaf_hashes();
         let siblings = compute_siblings(&hashes, idx)?;
         let entry = &self.leaves[idx];
         Some(ExistenceProof {
@@ -132,6 +145,8 @@ impl StateTree {
             key_hash: entry.key_hash,
             value: entry.value.clone(),
             siblings,
+            index: idx as u64,
+            total_leaves: self.leaves.len() as u64,
         })
     }
 
@@ -143,15 +158,11 @@ impl StateTree {
         key_hash: &[u8; HASH_LEN],
     ) -> Option<NonExistenceProof> {
         let pos = match self.find(namespace, key_hash) {
-            Ok(_) => return None, // key exists
+            Ok(_) => return None,
             Err(p) => p,
         };
-
-        let hashes: Vec<[u8; HASH_LEN]> = self
-            .leaves
-            .iter()
-            .map(|e| leaf_hash(e.namespace.as_str(), &e.key_hash, &e.value))
-            .collect();
+        let hashes = self.leaf_hashes();
+        let total_leaves = self.leaves.len() as u64;
 
         let left = if pos == 0 {
             None
@@ -163,6 +174,8 @@ impl StateTree {
                 key_hash: e.key_hash,
                 value: e.value.clone(),
                 siblings: compute_siblings(&hashes, i).unwrap(),
+                index: i as u64,
+                total_leaves,
             })
         };
         let right = if pos >= self.leaves.len() {
@@ -174,6 +187,8 @@ impl StateTree {
                 key_hash: e.key_hash,
                 value: e.value.clone(),
                 siblings: compute_siblings(&hashes, pos).unwrap(),
+                index: pos as u64,
+                total_leaves,
             })
         };
 
@@ -182,7 +197,15 @@ impl StateTree {
             queried_key_hash: *key_hash,
             left_neighbor: left,
             right_neighbor: right,
+            total_leaves,
         })
+    }
+
+    fn leaf_hashes(&self) -> Vec<[u8; HASH_LEN]> {
+        self.leaves
+            .iter()
+            .map(|e| leaf_hash(e.namespace.as_str(), &e.key_hash, &e.value))
+            .collect()
     }
 
     /// Binary-search position. `Ok(i)` if present, `Err(pos)` if absent
@@ -213,7 +236,7 @@ impl StateTree {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::merkle::EMPTY_ROOT;
+    use crate::merkle::state_empty_root;
     use crate::proof::{verify_existence, verify_non_existence};
 
     fn ns(s: &str) -> Namespace {
@@ -228,7 +251,7 @@ mod tests {
     fn fresh_tree_is_empty_root() {
         let mut t = StateTree::new();
         assert!(t.is_empty());
-        assert_eq!(t.root(), EMPTY_ROOT);
+        assert_eq!(t.root(), state_empty_root());
     }
 
     #[test]
@@ -269,7 +292,18 @@ mod tests {
         assert_ne!(r2, r3);
         t.remove(&ns("a"), &key(1));
         let r4 = t.root();
-        assert_eq!(r4, EMPTY_ROOT);
+        assert_eq!(r4, state_empty_root());
+    }
+
+    #[test]
+    fn root_differs_across_leaf_counts() {
+        // state_root_commit binds leaf count, so trees of different size
+        // cannot share a root even if their raw merkle_roots coincided.
+        let mut a = StateTree::new();
+        a.insert(ns("x"), key(1), b"v".to_vec());
+        let mut b = a.clone();
+        b.insert(ns("y"), key(2), b"v".to_vec());
+        assert_ne!(a.root(), b.root());
     }
 
     #[test]

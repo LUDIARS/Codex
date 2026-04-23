@@ -32,6 +32,10 @@ pub mod dom {
     pub const EVENT_SIG: &[u8; 16] = b"LUDIARS-CDX-E001";
     /// Prefix for deterministic session chain id derivation (§6.6.2).
     pub const CHAIN_ID: &[u8; 16] = b"LUDIARS-CDX-C001";
+    /// Prefix for state-root commitment `blake3(tag ‖ leaf_count_LE ‖ merkle_root)`.
+    /// Binds the state tree's size into the root so that an adversary can't
+    /// forge adjacency-based non-existence proofs.
+    pub const STATE_ROOT: &[u8; 16] = b"LUDIARS-CDX-S001";
 }
 
 /// Length in bytes of a Codex `PeerId`.

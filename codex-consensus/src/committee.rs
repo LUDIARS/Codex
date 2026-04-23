@@ -14,11 +14,12 @@
 //! - [`EquivocationProof`] — two distinct headers at same chain_id +
 //!   height both signed by the same offender
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use codex_core::block::{Block, BlockHeader, BlockHeaderPayload};
 use codex_crypto::{PeerId, Signature, SigningKey, Verifier, VerifyingKey};
 use codex_state::{StateTree, Stf};
+use serde::{Deserialize, Serialize};
 
 use crate::chain::ChainTip;
 use crate::error::ConsensusError;
@@ -412,6 +413,189 @@ pub enum ValidatorChange {
     Replace,
 }
 
+// ---------------------------------------------------------------------
+// codex.system.ValidatorSetChange event schema (§6.7.1)
+// ---------------------------------------------------------------------
+
+/// Namespace used for all committee-governance events.
+pub const SYSTEM_COMMITTEE_NAMESPACE: &str = "codex.system.committee";
+
+/// Body of a `ValidatorSetChange` event. Gets wrapped in an Event with
+/// `namespace = codex.system.committee` and signed by a current
+/// committee member. An external aggregator collects at least
+/// `attestation_threshold` such signatures to form the full proposal;
+/// this struct is the per-signer payload.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ValidatorSetChangeBody {
+    pub change_type: ChangeType,
+    pub effective_at_height: u64,
+    #[serde(default)]
+    pub rationale: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ChangeType {
+    Add(PeerId, #[serde(with = "serde_bytes_32")] [u8; 32]), // peer + pubkey
+    Remove(PeerId),
+    Replace {
+        old: PeerId,
+        new: PeerId,
+        #[serde(with = "serde_bytes_32")]
+        new_pubkey: [u8; 32],
+    },
+}
+
+impl ChangeType {
+    pub fn classifier(&self) -> ValidatorChange {
+        match self {
+            ChangeType::Add(_, _) => ValidatorChange::Add,
+            ChangeType::Remove(_) => ValidatorChange::Remove,
+            ChangeType::Replace { .. } => ValidatorChange::Replace,
+        }
+    }
+}
+
+mod serde_bytes_32 {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(v: &[u8; 32], s: S) -> Result<S::Ok, S::Error> {
+        serde_bytes::Bytes::new(v).serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[u8; 32], D::Error> {
+        use serde::de::Error;
+        let bytes = serde_bytes::ByteBuf::deserialize(d)?;
+        if bytes.len() != 32 {
+            return Err(D::Error::custom(format!(
+                "expected 32 bytes, got {}",
+                bytes.len()
+            )));
+        }
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&bytes);
+        Ok(out)
+    }
+}
+
+/// FIFO tracker of staged committee changes awaiting their
+/// `effective_at_height`. Consumers (node / verifier) inspect the
+/// front of the queue at each block-apply to know when to mutate the
+/// live `ValidatorSet`.
+#[derive(Debug, Default)]
+pub struct StagedChanges {
+    queue: VecDeque<ValidatorSetChangeBody>,
+}
+
+impl StagedChanges {
+    pub fn new() -> Self {
+        Self {
+            queue: VecDeque::new(),
+        }
+    }
+
+    /// Stage a change. Returns `Err` if `effective_at_height <=
+    /// current_height + rules.min_announce_blocks`.
+    pub fn stage(
+        &mut self,
+        change: ValidatorSetChangeBody,
+        current_height: u64,
+        rules: &CommitteeRules,
+    ) -> Result<(), ConsensusError> {
+        if change.effective_at_height < current_height + rules.min_announce_blocks {
+            return Err(ConsensusError::Committee(format!(
+                "effective_at_height {} is less than current+{}",
+                change.effective_at_height, rules.min_announce_blocks
+            )));
+        }
+        self.queue.push_back(change);
+        Ok(())
+    }
+
+    /// Drain every staged change whose `effective_at_height <=
+    /// current_height`. Callers apply each to the live set in order.
+    pub fn take_matured(&mut self, current_height: u64) -> Vec<ValidatorSetChangeBody> {
+        let mut out = Vec::new();
+        while self
+            .queue
+            .front()
+            .map(|c| c.effective_at_height <= current_height)
+            .unwrap_or(false)
+        {
+            out.push(self.queue.pop_front().unwrap());
+        }
+        out
+    }
+
+    pub fn pending(&self) -> usize {
+        self.queue.len()
+    }
+}
+
+/// Apply a single staged change to a validator set in place, enforcing
+/// the post-change size guard. Used by the caller after
+/// [`StagedChanges::take_matured`] returns a change at block N's apply.
+pub fn apply_change_to_set(
+    set: &mut ValidatorSet,
+    change: &ValidatorSetChangeBody,
+    rules: &CommitteeRules,
+) -> Result<(), ConsensusError> {
+    if !post_change_size_ok(set.len(), change.change_type.classifier(), rules) {
+        return Err(ConsensusError::Committee(format!(
+            "post-change size would be < {} ({} guard)",
+            rules.min_size, rules.min_size
+        )));
+    }
+    match &change.change_type {
+        ChangeType::Add(peer, pubkey_bytes) => {
+            if set.contains(peer) {
+                return Err(ConsensusError::Committee("validator already in set".into()));
+            }
+            let vk = VerifyingKey::from_bytes(pubkey_bytes)
+                .map_err(|_| ConsensusError::Committee("invalid verifying key bytes".into()))?;
+            let mut members = set.members().to_vec();
+            members.push((*peer, vk));
+            *set = ValidatorSet::sorted(members)?;
+        }
+        ChangeType::Remove(peer) => {
+            if !set.contains(peer) {
+                return Err(ConsensusError::Committee("validator not in set".into()));
+            }
+            let members: Vec<_> = set
+                .members()
+                .iter()
+                .filter(|(p, _)| p != peer)
+                .cloned()
+                .collect();
+            *set = ValidatorSet::sorted(members)?;
+        }
+        ChangeType::Replace {
+            old,
+            new,
+            new_pubkey,
+        } => {
+            if !set.contains(old) {
+                return Err(ConsensusError::Committee("old validator not in set".into()));
+            }
+            if set.contains(new) {
+                return Err(ConsensusError::Committee(
+                    "new validator already in set".into(),
+                ));
+            }
+            let new_vk = VerifyingKey::from_bytes(new_pubkey)
+                .map_err(|_| ConsensusError::Committee("invalid new verifying key bytes".into()))?;
+            let mut members: Vec<_> = set
+                .members()
+                .iter()
+                .filter(|(p, _)| p != old)
+                .cloned()
+                .collect();
+            members.push((*new, new_vk));
+            *set = ValidatorSet::sorted(members)?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -586,6 +770,72 @@ mod tests {
     #[allow(clippy::assertions_on_constants)]
     fn min_committee_size_is_three() {
         assert!(MIN_COMMITTEE_SIZE == 3);
+    }
+
+    #[test]
+    fn staged_changes_reject_short_announce() {
+        let rules = CommitteeRules::default();
+        let mut staged = StagedChanges::new();
+        let change = ValidatorSetChangeBody {
+            change_type: ChangeType::Remove(PeerId([0u8; 20])),
+            effective_at_height: 5, // too soon when current=3 and min_announce=8
+            rationale: None,
+        };
+        assert!(staged.stage(change, 3, &rules).is_err());
+    }
+
+    #[test]
+    fn staged_changes_mature_in_order() {
+        let rules = CommitteeRules::default();
+        let mut staged = StagedChanges::new();
+        for offset in [8u64, 10, 15] {
+            let change = ValidatorSetChangeBody {
+                change_type: ChangeType::Remove(PeerId([offset as u8; 20])),
+                effective_at_height: offset,
+                rationale: None,
+            };
+            staged.stage(change, 0, &rules).unwrap();
+        }
+        assert_eq!(staged.pending(), 3);
+        let matured_at_10 = staged.take_matured(10);
+        assert_eq!(matured_at_10.len(), 2); // heights 8 and 10
+        assert_eq!(matured_at_10[0].effective_at_height, 8);
+        assert_eq!(matured_at_10[1].effective_at_height, 10);
+        assert_eq!(staged.pending(), 1);
+    }
+
+    #[test]
+    fn apply_add_grows_set_and_reindexes() {
+        let rules = CommitteeRules::default();
+        let m: Vec<_> = make_set(3).into_iter().map(|(p, vk, _)| (p, vk)).collect();
+        let mut set = ValidatorSet::new(m).unwrap();
+        let sk = SigningKey::generate(&mut OsRng);
+        let vk = sk.verifying_key();
+        let peer = PeerId::from_verifying_key(&vk);
+        let change = ValidatorSetChangeBody {
+            change_type: ChangeType::Add(peer, vk.to_bytes()),
+            effective_at_height: 100,
+            rationale: None,
+        };
+        apply_change_to_set(&mut set, &change, &rules).unwrap();
+        assert_eq!(set.len(), 4);
+        assert!(set.contains(&peer));
+    }
+
+    #[test]
+    fn apply_remove_shrinks_but_respects_guard() {
+        let rules = CommitteeRules::default();
+        let m: Vec<_> = make_set(3).into_iter().map(|(p, vk, _)| (p, vk)).collect();
+        let first = m[0].0;
+        let mut set = ValidatorSet::new(m).unwrap();
+        let change = ValidatorSetChangeBody {
+            change_type: ChangeType::Remove(first),
+            effective_at_height: 100,
+            rationale: None,
+        };
+        // Size 3 → 2 trips the guard (min is 3).
+        assert!(apply_change_to_set(&mut set, &change, &rules).is_err());
+        assert_eq!(set.len(), 3);
     }
 
     #[test]

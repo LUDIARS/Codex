@@ -24,10 +24,31 @@ use serde::{Deserialize, Serialize};
 /// that want merkle-centric naming.
 pub const HASH_LEN: usize = 32;
 
-/// Root hash of an empty state tree. Distinct from any real leaf by
-/// construction (leaves are prefixed with `dom::LEAF`); preimage collision
-/// with the all-zero value would require breaking blake3.
+/// Root hash of an empty *ordered* merkle (used for `events_root` when
+/// a block has no events). State trees use [`state_root_commit`], which
+/// wraps the merkle root with the leaf count.
 pub const EMPTY_ROOT: [u8; HASH_LEN] = [0u8; HASH_LEN];
+
+/// Wrap a raw merkle root with a leaf-count commitment per §5.4.3.
+///
+/// `state_root = blake3(dom::STATE_ROOT ‖ u64_le(leaf_count) ‖ merkle_root)`.
+///
+/// Binding the count into the root means an adversary can't claim a
+/// forged `index` for an `ExistenceProof`: the index is verified against
+/// the count, and the count is part of the root the verifier already
+/// trusts (via the signed block header).
+pub fn state_root_commit(leaf_count: u64, merkle_root: &[u8; HASH_LEN]) -> [u8; HASH_LEN] {
+    let mut hasher = Blake3Hasher::new();
+    hasher.update(dom::STATE_ROOT);
+    hasher.update(&leaf_count.to_le_bytes());
+    hasher.update(merkle_root);
+    finalize(hasher)
+}
+
+/// State root of an empty tree: `state_root_commit(0, &EMPTY_ROOT)`.
+pub fn state_empty_root() -> [u8; HASH_LEN] {
+    state_root_commit(0, &EMPTY_ROOT)
+}
 
 /// Direction of the sibling at a given merkle level relative to the
 /// current node.

@@ -13,8 +13,10 @@
 
 pub mod error;
 pub mod full;
+pub mod snapshot;
 pub mod transport;
 
 pub use error::SyncError;
 pub use full::{full_sync, header_sync};
+pub use snapshot::StateSnapshot;
 pub use transport::{InMemoryTransport, SyncTransport};

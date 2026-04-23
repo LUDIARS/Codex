@@ -190,6 +190,7 @@ dependencies = [
  "postcard",
  "rand_core",
  "serde",
+ "serde_bytes",
  "thiserror 1.0.69",
 ]
 
@@ -299,8 +300,10 @@ dependencies = [
  "codex-domain-examples",
  "codex-node",
  "codex-state",
+ "hex",
  "postcard",
  "rand_core",
+ "serde",
  "thiserror 1.0.69",
 ]
 
