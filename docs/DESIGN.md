@@ -1,10 +1,11 @@
 # Codex 設計書
 
-> 版: 0.6 — 2026-04-23
+> 版: 0.7 — 2026-04-23
 > 著者: kazmit299
 > ステータス: 設計ドラフト (実装未着手)
 >
 > **変更履歴**
+> - 0.7 (2026-04-23) — B1 確定: Namespace handler は full node binary にコンパイル済、static config で有効化。動的登録は v1+ 持ち越し。`codex.system` namespace を予約
 > - 0.6 (2026-04-23) — **A3 改訂**: Synergos には synergos-crypto crate が存在せず crypto が synergos-net に埋込済のため、facade 方針を撤回。`codex-crypto` は ed25519-dalek + blake3 を直接依存する独立実装に変更。PeerId を `[u8; 20]` binary として §5.1 に正式定義
 > - 0.5 (2026-04-23) — A4 確定: Merkle tree は sorted-key binary (v0)、leaf/internal は domain-separation tag 必須、ExistenceProof と NonExistenceProof を正式定義
 > - 0.4 (2026-04-23) — A3 確定: `codex-crypto` は `synergos-crypto` のファサード crate として存在、domain separation 定数のみ独自定義
@@ -369,11 +370,67 @@ state_t+1 = apply(state_t, block)
   return state
 ```
 
-- `validate`: 署名検証、nonce 単調性、parent 存在、namespace 手続きの事前条件
+- `validate`: 署名検証、nonce ユニーク性 (§5.2.2)、namespace 手続きの事前条件
 - `apply_event`: namespace 登録済の handler を呼び state を変異
 - **決定論必須**: 同一 (state_t, block) は必ず同じ state_{t+1} を出す → state_root が全 participant で一致
 
-namespace handler は **Codex core には入れず、利用側 crate が register する** (§9.1)。
+namespace handler は **Codex core には入れず、利用側 crate が register する** (§9.1)。登録方式の詳細は §5.6。
+
+### 5.6 Namespace 登録モデル (v0 確定、v1+ 拡張)
+
+#### 5.6.1 v0 基本形: binary 組込 + static config
+
+- **Handler ロジック は full node binary にコンパイル済** (Rust の NamespaceHandler trait 実装)
+- 起動時に **static config** (TOML) から有効化 namespace set を読み込む
+- 同じ binary でも運用環境ごとに異なる config で稼働可能 (Tessera 用 / Curare 用 / テスト用 等)
+
+```toml
+# codex-node.toml の抜粋
+[namespaces]
+enabled = [
+  "tessera.game",
+  "curare.asset",
+  "actio.attendance",
+  "codex.system",   # 予約、§5.6.3
+]
+
+[namespaces."tessera.game"]
+# handler 固有パラメタ (rate limit, match duration 等)
+max_match_duration_s = 1800
+```
+
+- Cargo feature flag で handler crate を条件 include 可能: 例えば `codex-node --features "domain-tessera,domain-curare"` でビルド
+- handler 未登録の namespace が event で飛んできたら `ValidationError::UnknownNamespace` を返して reject
+
+#### 5.6.2 動的登録は v0 スコープ外
+
+Codex v0 は **動的 handler 追加機構を実装しない**。
+
+- WASM / eBPF / dynamic loader は §2.2 out of scope に該当 (EVM 相当の複雑性)
+- 新しい namespace 追加 = Rust 実装 → binary rebuild → config 追記 → deploy というサイクル
+- このサイクルは Ethereum の hard fork (prepackaged upgrade) と等価の運用モデル
+
+これは「LUDIARS 横断で使える汎用台帳」というポジションと矛盾しないか — しない。**実装は集中管理、運用は分散** (各サービスが自分の codex-node インスタンスを走らせる、namespace 有効化を config で選ぶ) で十分。
+
+#### 5.6.3 `codex.system` namespace 予約
+
+将来の system-level 操作 (handler 有効化トグル、validator set 変更、checkpoint 発行 等) のため **`codex.system`** を reserved namespace とする:
+
+- v0: **定義のみ、event 受理は拒否** (unknown namespace 扱い)
+- v1+: 特権 event を流すための namespace として使用。validate は committee / session signer 検証付き
+
+利用側 namespace は `codex.system` プレフィクスを名乗れない (validation で reject)。
+
+#### 5.6.4 v1+ での動的拡張余地 (設計保留)
+
+将来検討する dynamic activation の形:
+
+- `codex.system.RegisterNamespace { target_namespace, handler_version, config }` event
+- signer = committee (多数決) or session producer
+- handler 本体は binary 済、config でアクティベート切替のみ
+- binary に未入の handler は依然として deploy 必須 (動的コードロードは採用しない)
+
+これも v0 では実装しない。§15 に残置。
 
 ## 6. Consensus と block production
 
@@ -691,7 +748,7 @@ pub mod dom {
 ## 15. 未決事項
 
 - [x] ~~Merkle tree の最終選択~~ — **v0.5 で確定**: sorted-key binary (v0)、domain-separated leaf/internal encoding、ExistenceProof + NonExistenceProof 構造 (§5.4.1–5.4.3)。Sparse Merkle / Verkle 移行評価は M4 state_root 実測後
-- [ ] Namespace 登録の運用 — 静的 config か、special namespace event で動的登録か
+- [x] ~~Namespace 登録の運用 — 静的 config か、special namespace event で動的登録か~~ — **v0.7 で確定**: v0 は binary 組込 + static config (§5.6)、`codex.system` を予約。動的登録は v1+ 持ち越し
 - [ ] Committee mode の validator 変更プロトコル詳細 — 2/3 合意で即変更か、epoch 境界でのみか
 - [ ] Checkpoint 署名者の bootstrap trust — bundled public key vs PKI vs transparency log
 - [ ] Session → domain chain の checkpoint 形式 — 1 event として埋込か、header extension か
