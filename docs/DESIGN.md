@@ -1,10 +1,11 @@
 # Codex 設計書
 
-> 版: 0.7 — 2026-04-23
+> 版: 0.8 — 2026-04-23
 > 著者: kazmit299
 > ステータス: 設計ドラフト (実装未着手)
 >
 > **変更履歴**
+> - 0.8 (2026-04-23) — B2 確定: Session → domain chain checkpoint は `codex.system.Checkpoint` event として domain chain に submit。L2 rollup 相当、fraud proof 不要 (署名検証のみで finality)。v0 は final checkpoint のみ
 > - 0.7 (2026-04-23) — B1 確定: Namespace handler は full node binary にコンパイル済、static config で有効化。動的登録は v1+ 持ち越し。`codex.system` namespace を予約
 > - 0.6 (2026-04-23) — **A3 改訂**: Synergos には synergos-crypto crate が存在せず crypto が synergos-net に埋込済のため、facade 方針を撤回。`codex-crypto` は ed25519-dalek + blake3 を直接依存する独立実装に変更。PeerId を `[u8; 20]` binary として §5.1 に正式定義
 > - 0.5 (2026-04-23) — A4 確定: Merkle tree は sorted-key binary (v0)、leaf/internal は domain-separation tag 必須、ExistenceProof と NonExistenceProof を正式定義
@@ -470,6 +471,87 @@ Codex v0 は **動的 handler 追加機構を実装しない**。
 - committee mode: signer が 2 つの block に署名 (equivocation) → proof が他 signer から提出された時点で set から除名
 - Codex core に slashing 経済は無いため、除名は運用レベル
 
+### 6.6 Session → domain chain checkpoint
+
+Session chain (ephemeral、match 中のみ稼働) の最終状態を **domain chain (long-lived) に anchor** する仕組み。L2 rollup の state commitment と同じ構造。
+
+#### 6.6.1 形式: `codex.system.Checkpoint` event
+
+Checkpoint は独自 header 拡張ではなく、**domain chain 上の通常 event** として実装する:
+
+```rust
+// codex.system.Checkpoint の body (postcard serialize)
+pub struct CheckpointBody {
+    /// session chain の ID (後述 §6.6.2 で deterministic に導出)
+    pub session_chain_id: ChainId,
+
+    /// session chain の最終 block height
+    pub final_height: u64,
+
+    /// session chain の最終 state_root
+    pub final_state_root: Blake3Hash,
+
+    /// session chain の最終 header の hash (chain tip 確定)
+    pub final_header_hash: Blake3Hash,
+
+    /// session producer の PeerId
+    pub producer: PeerId,
+
+    /// final_header_hash への producer 署名 (session mode)
+    /// committee mode では attestations: Vec<Attestation> を body に持つ
+    pub producer_attestation: Ed25519Signature,
+}
+```
+
+この event を **session producer 自身が `claimant`** として domain chain に submit する。domain chain の STF が通常通り validate + apply → ブロック確定で checkpoint が anchor される。
+
+#### 6.6.2 session_chain_id の導出
+
+session chain は ephemeral なので genesis を都度作るが、ID は deterministic に:
+
+```
+session_chain_id = blake3(
+    dom::CHAIN_ID         // 予約 tag
+    ‖ domain_chain_id     // 親 domain chain
+    ‖ session_start_ms    // u64
+    ‖ producer_peer_id    // 20 byte
+)
+```
+
+- 誰でも同じ入力から同じ ID を再計算可能 = verifiable
+- 同 producer が同じ timestamp で 2 session は作れない (ID 衝突) = misuse 防止
+
+#### 6.6.3 Fraud proof は不要
+
+Ethereum の optimistic rollup は fraud proof で state 妥当性を検証するが、Codex は以下により **署名検証のみで finality** が取れる:
+
+- **session mode**: producer は authoritative / arbiter (Tessera §5.5.3)。検証済 signer の署名があれば state_root は正当
+- **mesh rollback 連携**: Tessera mesh プロファイルでは全 peer が決定論 sim で同一 state に到達している前提。producer は代表として署名するだけ
+- **committee mode**: N/2+1 の attestation が body に含まれるため、多数決で妥当性が担保される
+
+したがって challenge window / fraud proof 機構は v0 で実装しない。
+
+#### 6.6.4 Checkpoint の検証 (cross-chain trace)
+
+「この event が session S に含まれ、S は domain chain D に checkpoint された」を証明する手順:
+
+```
+1. target_event → session chain の ExistenceProof (§5.4.3)
+   → session の final_header_hash まで連結可能を確認
+2. session final_header_hash → CheckpointBody に含まれる値と一致
+3. Checkpoint event → domain chain の ExistenceProof
+   → trusted domain header まで連結可能
+4. 全署名 (target_event.sig, session_producer_attestation, domain_header_sig)
+   を検証
+```
+
+→ **cross-chain verification は 2 回の SPV + 署名 3 段** で完結。light client が 1 RTT で取得できる情報量で十分。
+
+#### 6.6.5 v0 の制約と v1+ への展望
+
+- **v0**: final checkpoint のみ (session 終了時の 1 回)
+- **v1+ で検討**: interim checkpoint (定期的な進行中 state commit、長時間 session 向け) / multi-hop checkpoint (session → intermediate chain → domain chain) / zk 圧縮
+
 ## 7. ネットワーク
 
 ### 7.1 Event propagation (mempool gossip)
@@ -681,6 +763,7 @@ pub mod dom {
     pub const INTERNAL:  &[u8; 16] = b"LUDIARS-CDX-N001";
     pub const BLOCK_SIG: &[u8; 16] = b"LUDIARS-CDX-B001";
     pub const EVENT_SIG: &[u8; 16] = b"LUDIARS-CDX-E001";
+    pub const CHAIN_ID:  &[u8; 16] = b"LUDIARS-CDX-C001";  // session_chain_id 導出 (§6.6.2)
 }
 ```
 
@@ -751,7 +834,7 @@ pub mod dom {
 - [x] ~~Namespace 登録の運用 — 静的 config か、special namespace event で動的登録か~~ — **v0.7 で確定**: v0 は binary 組込 + static config (§5.6)、`codex.system` を予約。動的登録は v1+ 持ち越し
 - [ ] Committee mode の validator 変更プロトコル詳細 — 2/3 合意で即変更か、epoch 境界でのみか
 - [ ] Checkpoint 署名者の bootstrap trust — bundled public key vs PKI vs transparency log
-- [ ] Session → domain chain の checkpoint 形式 — 1 event として埋込か、header extension か
+- [x] ~~Session → domain chain の checkpoint 形式 — 1 event として埋込か、header extension か~~ — **v0.8 で確定**: `codex.system.Checkpoint` event として domain chain に submit (§6.6)。header extension は不採用 (SPV 複雑化回避)。fraud proof は session producer 信頼モデルにより不要。v0 は final のみ、interim は v1+
 - [x] ~~`codex-crypto` は独立 crate 化か `synergos-crypto` 再エクスポートか~~ — **v0.4 で facade 方針決定、v0.6 で撤回して独立実装に改訂** (§11.1)。Synergos は synergos-crypto crate を持たず crypto が synergos-net に埋込のため前提不成立。ed25519-dalek + blake3 を直接依存する独立 crate として実装、PeerId は `[u8; 20]` binary (Synergos の hex string と byte-level 互換)。将来 Synergos 側 refactor 時に ludiars-crypto 共通化を検討
 - [x] ~~Event の `parent` フィールド必要性~~ — **v0.2 で削除確定**。DAG 依存は namespace body に埋込 (§5.2.1)
 - [x] ~~`nonce` の spacing~~ — **v0.3 で確定**: ユニーク性のみ必須、単調増加は推奨、gap 許容 (§5.2.2)
