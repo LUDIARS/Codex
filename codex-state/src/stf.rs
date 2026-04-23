@@ -97,17 +97,15 @@ impl Stf {
         Ok(())
     }
 
-    /// Apply a block:
-    /// 1. On a scratch clone of `state`, validate and apply every event
-    ///    in order.
-    /// 2. Compute new `events_root` and `state_root`.
-    /// 3. If the block declares non-zero events_root / state_root in its
-    ///    header, check they match (caller can pass placeholders for
-    ///    producing new blocks; see `build_block_header` helpers in
-    ///    codex-consensus / codex-node which will land in M2).
-    /// 4. On success, commit by replacing `state` with the scratch and
-    ///    consuming nonces in the tracker.
-    /// 5. On failure, `state` and `self.nonces` are left unchanged.
+    /// Apply a block's events. Does not enforce that the block's header
+    /// roots match the computed roots — producers use this after
+    /// `dry_run_block` has already told them the roots. Verifiers should
+    /// use [`Stf::verify_and_apply_block`] instead, which enforces the
+    /// match.
+    ///
+    /// Semantics: on a scratch clone of `state` + `self.nonces`,
+    /// validate + apply every event in order. On any failure, both
+    /// scratches are discarded and `self` / `state` are untouched.
     pub fn apply_block<F>(
         &mut self,
         block: &Block,
@@ -117,48 +115,97 @@ impl Stf {
     where
         F: FnMut(&PeerId) -> Option<VerifyingKey>,
     {
-        // Work on a scratch so validation failures don't corrupt `state`.
         let mut scratch_state = state.clone();
         let mut scratch_nonces = self.nonces.clone();
+        let applied = self.apply_to_scratch(
+            &block.events,
+            &mut scratch_state,
+            &mut scratch_nonces,
+            resolve,
+        )?;
+        *state = scratch_state;
+        self.nonces = scratch_nonces;
+        Ok(applied)
+    }
 
-        for (idx, event) in block.events.iter().enumerate() {
-            self.validate_with_scratch(event, &scratch_state, &scratch_nonces, resolve)
+    /// Compute `events_root` and `state_root` as if the given events
+    /// were applied, but commit nothing. Used by the producer to fill
+    /// in the header it's about to sign.
+    pub fn dry_run_block<F>(
+        &self,
+        events: &[Event],
+        state: &StateTree,
+        resolve: &mut F,
+    ) -> Result<AppliedBlock, StfError>
+    where
+        F: FnMut(&PeerId) -> Option<VerifyingKey>,
+    {
+        let mut scratch_state = state.clone();
+        let mut scratch_nonces = self.nonces.clone();
+        self.apply_to_scratch(events, &mut scratch_state, &mut scratch_nonces, resolve)
+    }
+
+    /// Apply a block and additionally verify that the block header's
+    /// `events_root` / `state_root` match the recomputed roots.
+    /// Mismatch rolls back atomically.
+    pub fn verify_and_apply_block<F>(
+        &mut self,
+        block: &Block,
+        state: &mut StateTree,
+        resolve: &mut F,
+    ) -> Result<AppliedBlock, StfError>
+    where
+        F: FnMut(&PeerId) -> Option<VerifyingKey>,
+    {
+        let mut scratch_state = state.clone();
+        let mut scratch_nonces = self.nonces.clone();
+        let applied = self.apply_to_scratch(
+            &block.events,
+            &mut scratch_state,
+            &mut scratch_nonces,
+            resolve,
+        )?;
+        if applied.events_root != block.header.payload.events_root {
+            return Err(StfError::EventsRootMismatch);
+        }
+        if applied.state_root != block.header.payload.state_root {
+            return Err(StfError::StateRootMismatch);
+        }
+        *state = scratch_state;
+        self.nonces = scratch_nonces;
+        Ok(applied)
+    }
+
+    fn apply_to_scratch<F>(
+        &self,
+        events: &[Event],
+        scratch_state: &mut StateTree,
+        scratch_nonces: &mut NonceTracker,
+        resolve: &mut F,
+    ) -> Result<AppliedBlock, StfError>
+    where
+        F: FnMut(&PeerId) -> Option<VerifyingKey>,
+    {
+        for (idx, event) in events.iter().enumerate() {
+            self.validate_with_scratch(event, scratch_state, scratch_nonces, resolve)
                 .map_err(|source| StfError::Validation { index: idx, source })?;
-
-            // Consume nonce in scratch.
             scratch_nonces
                 .accept(
                     event.payload.claimant,
                     event.payload.namespace.clone(),
                     event.payload.nonce,
                 )
-                .expect(
-                    "nonce just verified fresh; accept should succeed unless a duplicate exists within this block",
-                );
-
-            // Apply via handler.
+                .expect("nonce just verified fresh");
             let handler = self
                 .registry
                 .get(&event.payload.namespace)
                 .expect("handler existence verified in validate");
             handler
-                .apply(event, &mut scratch_state)
+                .apply(event, scratch_state)
                 .map_err(|source| StfError::Apply { index: idx, source })?;
         }
-
-        let events_root = compute_events_root(&block.events);
+        let events_root = compute_events_root(events);
         let state_root = scratch_state.root();
-
-        // Block-header root fields are authoritative after commit.
-        // Caller / consensus layer is responsible for checking the block
-        // header equals these roots. We return them here for the caller
-        // to use; we do *not* enforce the check in v0 because producers
-        // assemble the block *from* the resulting roots, not the other
-        // way around.
-
-        *state = scratch_state;
-        self.nonces = scratch_nonces;
-
         Ok(AppliedBlock {
             events_root,
             state_root,

@@ -1,0 +1,19 @@
+[package]
+name = "codex-consensus"
+description = "Codex consensus layer: session (single signer) and committee (PoA) modes, producer and verifier"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+codex-core = { path = "../codex-core" }
+codex-crypto = { path = "../codex-crypto" }
+codex-state = { path = "../codex-state" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+rand_core = { workspace = true }
+postcard = { workspace = true }

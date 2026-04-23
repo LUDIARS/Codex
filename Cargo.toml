@@ -3,6 +3,7 @@ members = [
     "codex-crypto",
     "codex-core",
     "codex-state",
+    "codex-consensus",
 ]
 resolver = "2"
 

@@ -84,6 +84,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-consensus"
+version = "0.1.0"
+dependencies = [
+ "codex-core",
+ "codex-crypto",
+ "codex-state",
+ "postcard",
+ "rand_core",
+ "serde",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "codex-core"
 version = "0.1.0"
 dependencies = [
