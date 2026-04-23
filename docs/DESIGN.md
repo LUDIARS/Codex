@@ -1,10 +1,11 @@
 # Codex 設計書
 
-> 版: 0.4 — 2026-04-23
+> 版: 0.5 — 2026-04-23
 > 著者: kazmit299
 > ステータス: 設計ドラフト (実装未着手)
 >
 > **変更履歴**
+> - 0.5 (2026-04-23) — A4 確定: Merkle tree は sorted-key binary (v0)、leaf/internal は domain-separation tag 必須、ExistenceProof と NonExistenceProof を正式定義
 > - 0.4 (2026-04-23) — A3 確定: `codex-crypto` は `synergos-crypto` のファサード crate として存在、domain separation 定数のみ独自定義
 > - 0.3 (2026-04-23) — A2 確定: nonce は (claimant, namespace) で一意のみ要求、厳密連番 enforce せず gap 許容
 > - 0.2 (2026-04-23) — A1 確定: Event から `parent` フィールドを削除。DAG 依存は namespace body に委譲
@@ -243,24 +244,98 @@ struct Attestation {
 
 ### 5.4 State
 
-状態 = **(namespace, key) → Value** の map。
+状態 = **(namespace, key_hash) → Value** の map。
 
 ```rust
-type StateKey = (Namespace, Blake3Hash);  // key は namespace + right-specific key hash
+type StateKey = (Namespace, Blake3Hash);  // namespace + right-specific key hash
 type StateValue = Bytes;                   // namespace で schema 定義
 
 struct StateTree {
     root: Blake3Hash,
-    // 実装: binary merkle tree (sparse) または sorted-key merkle
+    // 実装: sorted-key binary merkle (v0)
 }
 ```
 
-**Merkle tree の選択** (§15 で確定、暫定方針):
+#### 5.4.1 Merkle tree の選定 — sorted-key binary (v0 確定)
 
-- v0: **sorted-key binary merkle** — シンプル、proof サイズ log N
-- v1 (将来): Verkle tree or Sparse Merkle Tree — proof を定数化
+- **v0 採用**: sorted-key binary merkle tree
+- **v1 候補 (将来)**: Sparse Merkle Tree / Verkle tree — proof 定数化が必要になった時点で評価
 
-Ethereum MPT の radix-16 Patricia は実装コストが重く、モバイル light client の proof decode も重いので v0 では採用しない。
+**v0 で sorted-key binary を選ぶ理由**:
+
+- 実装が単純 (~300 行)、fuzzing 容易
+- proof サイズ = `log₂ N × 32 B`。10⁶ leaves でも 640 B、**光クライアント予算 1 KB に余裕で収まる**
+- 非存在証明が **隣接 leaf 2 つの proof** で済む (sorted なので adjacency が意味を持つ)
+- Ethereum MPT (radix-16 Patricia) は branch/extension node が proof path に混ざり **2-3 倍大きい**。モバイルでは不利
+
+#### 5.4.2 Leaf と internal の符号化 (domain separation 必須)
+
+`codex-crypto` の domain-separation tag (§11.1) を常に prefix する。
+
+```rust
+// leaf: 存在する key-value
+fn leaf_hash(ns: &Namespace, key_hash: &Blake3Hash, value: &[u8]) -> Blake3Hash {
+    blake3(
+        dom::LEAF             //  "LUDIARS-CDX-L001"  (16 B)
+        ‖ ns.as_bytes_len_prefixed()
+        ‖ key_hash            //  32 B
+        ‖ value_len_varint()
+        ‖ value
+    )
+}
+
+// internal node
+fn node_hash(left: &Blake3Hash, right: &Blake3Hash) -> Blake3Hash {
+    blake3(
+        dom::INTERNAL         //  "LUDIARS-CDX-N001"  (16 B)
+        ‖ left  ‖ right       //  32 + 32 B
+    )
+}
+```
+
+**この符号化が避ける攻撃**:
+
+- **Second-preimage / length-extension** — tag prefix + 長さ前置で内容を改竄して同一 hash を生成不能
+- **Namespace collision** — 同じ `key_hash` が別 namespace で別 value を持っても衝突しない
+- **Leaf ↔ internal 混同** — tag が異なるため、leaf hash を internal node として使い回せない
+
+#### 5.4.3 Proof 構造
+
+```rust
+/// 存在証明: key が値 V で state に入っていることを証明
+struct ExistenceProof {
+    namespace:   Namespace,
+    key_hash:    Blake3Hash,
+    value:       Bytes,
+    siblings:    Vec<(Direction, Blake3Hash)>,  // root までの sibling hash 列、Direction ∈ {Left, Right}
+    block_header: BlockHeader,                  // state_root を含む
+}
+
+/// 非存在証明: key が state に入っていないことを証明
+struct NonExistenceProof {
+    queried_key: (Namespace, Blake3Hash),
+
+    /// 隣接する 2 leaf の存在証明 (sorted key 上で queried_key を挟む)
+    /// 先頭/末尾の特殊ケースは Option で左右どちらかのみ可能
+    left_neighbor:  Option<ExistenceProof>,
+    right_neighbor: Option<ExistenceProof>,
+}
+
+enum Direction { Left, Right }
+```
+
+**検証手順** (ExistenceProof):
+
+1. `leaf = leaf_hash(namespace, key_hash, value)` を再計算
+2. `siblings` を direction に従って折り畳み → `computed_root`
+3. `assert computed_root == block_header.state_root`
+4. `block_header.producer_sig` を検証 + checkpoint まで header chain を連結
+
+**検証手順** (NonExistenceProof):
+
+1. `left_neighbor` / `right_neighbor` それぞれを ExistenceProof として検証
+2. `left.key_hash < queried_key < right.key_hash` が sorted 順で成立することを確認
+3. さらに「2 leaves が sorted-key tree 上で adjacent」であることを siblings の構造から確認
 
 ### 5.5 State transition function (STF)
 
@@ -357,8 +432,8 @@ namespace handler は **Codex core には入れず、利用側 crate が registe
 full_node → light:  Proof { event: E, merkle_path: [...], header: B.header }
 light_client:
   1. verify E.sig (ed25519)
-  2. compute leaf = hash(E)
-  3. walk merkle_path, folding hashes → computed_root
+  2. compute leaf = blake3(dom::LEAF ‖ ns ‖ event_canonical_hash)  // §5.4.2
+  3. walk merkle_path using node_hash() folding → computed_root
   4. assert computed_root == B.header.events_root
   5. verify B.header.producer_sig (+ attestations if committee)
   6. verify B.header chains back to trusted checkpoint
@@ -370,13 +445,11 @@ light_client:
 「state において (namespace, key) の value は V である (at block B)」を検証:
 
 ```
-full_node → light: StateProof { key, value, merkle_path, header }
+full_node → light: ExistenceProof (§5.4.3) または NonExistenceProof
 light:
-  1. compute leaf = hash(key, value)
-  2. walk merkle_path → computed_root
-  3. assert computed_root == header.state_root
-  4. verify header chain
-→ "私は block H の時点でこの right を持っていた" が証明可能
+  存在証明: §5.4.3 の検証手順に従う (leaf_hash 再計算 → sibling 折畳み → state_root 照合 → header chain 検証)
+  非存在証明: left/right neighbor の存在証明 + adjacency 検証
+→ "私は block H の時点でこの right を持っていた" / 持っていなかった を証明可能
 ```
 
 ### 8.3 Subscription (push 配送)
@@ -571,7 +644,7 @@ pub mod dom {
 
 ## 15. 未決事項
 
-- [ ] Merkle tree の最終選択 — v0 で sorted-key binary を採用するが、Sparse Merkle / Verkle への移行判断の材料 (proof サイズ・生成コスト) を M4 で計測
+- [x] ~~Merkle tree の最終選択~~ — **v0.5 で確定**: sorted-key binary (v0)、domain-separated leaf/internal encoding、ExistenceProof + NonExistenceProof 構造 (§5.4.1–5.4.3)。Sparse Merkle / Verkle 移行評価は M4 state_root 実測後
 - [ ] Namespace 登録の運用 — 静的 config か、special namespace event で動的登録か
 - [ ] Committee mode の validator 変更プロトコル詳細 — 2/3 合意で即変更か、epoch 境界でのみか
 - [ ] Checkpoint 署名者の bootstrap trust — bundled public key vs PKI vs transparency log
