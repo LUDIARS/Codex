@@ -1,0 +1,89 @@
+{
+  "date": "2026-05-13",
+  "repo": "LUDIARS/Codex",
+  "commit": "59114a9",
+  "reviewer": "claude-opus-4-7[1m] (ludiars-review automated)",
+  "weighted_score": 81,
+  "grades": {
+    "design": "A",
+    "vulnerability": "B",
+    "implementation": "B",
+    "missing_features": "C",
+    "quality": "A"
+  },
+  "weights": {
+    "design": 0.25,
+    "vulnerability": 0.25,
+    "implementation": 0.20,
+    "missing_features": 0.15,
+    "quality": 0.15
+  },
+  "files": {
+    "REVIEW": "review/2026-05-13/REVIEW.md",
+    "REVIEW_DESIGN": "review/2026-05-13/REVIEW_DESIGN.md",
+    "REVIEW_VULNERABILITY": "review/2026-05-13/REVIEW_VULNERABILITY.md",
+    "REVIEW_IMPLEMENTATION": "review/2026-05-13/REVIEW_IMPLEMENTATION.md",
+    "REVIEW_MISSING_FEATURES": "review/2026-05-13/REVIEW_MISSING_FEATURES.md",
+    "REVIEW_QUALITY": "review/2026-05-13/REVIEW_QUALITY.md",
+    "AUTOFIX": "review/2026-05-13/AUTOFIX.md"
+  },
+  "autofix_count": 0,
+  "key_findings": [
+    {
+      "severity": "medium",
+      "area": "vulnerability",
+      "title": "Namespace serde bypasses validation",
+      "file": "codex-core/src/namespace.rs:198-208",
+      "note": "raw postcard::from_bytes::<Event> accepts 'bad..name' and codex.system.* spoofs. STF rejects today but v1+ system handlers expand the attack surface."
+    },
+    {
+      "severity": "medium",
+      "area": "vulnerability",
+      "title": "Light client lacks checkpoint trust bootstrap",
+      "file": "codex-light/src/lib.rs:62-103",
+      "note": "DESIGN §8.4 specifies bundled trusted checkpoint + rotation; current impl starts from ChainTip::genesis with no trust anchor distribution."
+    },
+    {
+      "severity": "medium",
+      "area": "vulnerability",
+      "title": "NonceTracker unbounded growth (DoS)",
+      "file": "codex-state/src/nonce.rs:22",
+      "note": "HashMap<(PeerId, Namespace), HashSet<u64>> retains every nonce ever seen. No per-claimant rate limit despite DESIGN §10 listing one."
+    },
+    {
+      "severity": "high",
+      "area": "missing_features",
+      "title": "codex-net / codex-rpc / codex-cli unimplemented",
+      "file": "codex-net/src/lib.rs",
+      "note": "DESIGN §11 crate list and milestone M3-M5 expect wire QUIC + gossipsub + RPC; current code is in-process verifier only."
+    },
+    {
+      "severity": "high",
+      "area": "missing_features",
+      "title": "codex.system.* event handlers not wired",
+      "file": "codex-state/src/handler.rs",
+      "note": "Checkpoint / ValidatorSetChange / ValidatorSlash bodies and helpers exist in codex-consensus but no STF-side handler registration path; v0 rejects via UnknownNamespace, not explicit guard."
+    },
+    {
+      "severity": "low",
+      "area": "implementation",
+      "title": "StateTree::clone per block",
+      "file": "codex-state/src/stf.rs:118",
+      "note": "Atomic rollback uses full StateTree clone. Acceptable v0 toy; M4+ needs incremental / persistent merkle for 10^8 entry target."
+    },
+    {
+      "severity": "low",
+      "area": "implementation",
+      "title": "SigningKey cloned into producer + node",
+      "file": "codex-node/src/node.rs:75",
+      "note": "Secret material duplicated in memory. Wrap in Arc<SigningKey> to share."
+    },
+    {
+      "severity": "low",
+      "area": "quality",
+      "title": "README status outdated",
+      "file": "README.md:39-42",
+      "note": "States 'design phase, DESIGN 0.1' while M0-M9 merged and DESIGN is 0.10."
+    }
+  ]
+}
